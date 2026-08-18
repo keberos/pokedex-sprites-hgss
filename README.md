@@ -103,6 +103,30 @@ Two fixes, both in 0.4.0:
 For the same reason the mod deliberately does **not** set `spriteTrueColor`: on an engine
 that has that plumbing, it would mark the whole bounding box and reintroduce the slab.
 
+## Compatibility
+
+**[Useful Dex](https://github.com/ShaneMcGovernIE/useful_dex) — either/or for the sprites,
+fine for the ball.** No hard conflict is declared, and nothing breaks if both are installed;
+the sprite swap just stops taking effect.
+
+Useful Dex registers its own `DexEntryMenu` and `PokedexMenu` screens, and a registry record
+beats the builtin in `Screens.resolve`.
+
+- *The caught marker still works.* Its list is built on the engine's `PokedexMenu`, keeps the
+  same `item.ball` field and still renders through `ListMenu`, which is where this mod's
+  wrapper sits — so the modern ball draws in all three of its list modes.
+- *The entry-page sprites do not.* Its `DexInfoScreen.new` does call the engine's
+  `DexEntryMenu.new`, so the swap lands — but the next line calls `setSpecies()`, which
+  re-resolves the pic through `Sprites.path(..., { kind = "battle" })` and overwrites it. That
+  `"battle"` is deliberate on its side (so animation and skin mods apply). This mod answers
+  only `kind == "dex"`, because answering `"battle"` would change real battle sprites, so it
+  falls through to vanilla art. It also draws with its own `DexInfoScreen:draw` rather than
+  the engine's, so the span-mask true-colour pass never runs either.
+
+A shim is possible — patch `setSpecies` on its metatable and wrap its draw — but it would
+reach into another mod's private tables and break on any refactor there, so it is
+deliberately not done.
+
 ## Status
 
 **Confirmed working in play** — the entry-page sprites render correctly. The caught-marker
