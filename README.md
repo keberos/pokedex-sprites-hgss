@@ -129,5 +129,8 @@ deliberately not done.
 
 ## Status
 
-**Confirmed working in play** — the entry-page sprites render correctly. The caught-marker
-ball and the tall-sprite border fix landed in 0.4.0 and have not been seen yet.
+**1.0.0 — confirmed working in play.** The entry-page sprites were verified in game, and the
+modern caught marker and tall-sprite border fix went out in 0.4.0 ahead of the promotion.
+
+Install with **Launcher → MODS → Import mod .zip**, or through the
+[keberos mod index](https://github.com/keberos/gen1recomp-index).
