@@ -1,7 +1,7 @@
 {
   "id": "pokedex-sprites-hgss",
   "name": "Pokedex Sprites (HGSS)",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -9,9 +9,11 @@
   "game_version": ">=0.0.0-0 <2.0.0",
   "github": "keberos/pokedex-sprites-hgss",
   "priority": 100,
-  "permissions": [],
+  "permissions": [
+    "engine_internals"
+  ],
   "dependencies": [],
   "optional_dependencies": [],
   "conflicts": [],
-  "description": "Replaces the Pokedex art (list-view preview and the full entry page) with HeartGold/SoulSilver-style sprites for all 151 species. Battle, party summary, evolution, Hall of Fame, and every other sprite site are untouched -- only the pokemon.sprite hook's dex-kind path is answered. This 0.2.0 build is a DIAGNOSTIC: it adds three temporary SPR rows to the START menu reporting whether the sprite hook fired and what species id it saw, to find why 0.1.0 changed nothing. Fan-art sprite swap sourced from Bulbagarden Archives; for personal use."
+  "description": "Replaces the Pokedex ENTRY PAGE art (the screen reached by highlighting a caught Pokemon and choosing DATA) with HeartGold/SoulSilver-style sprites for all 151 species. The Gen 1 dex LIST draws no sprite at all, so it never changes. Battle, party summary, evolution, Hall of Fame and every other sprite site keep vanilla art. 0.3.0 swaps by wrapping DexEntryMenu.new so it works on every engine version -- the pokemon.sprite hook 0.1.0 relied on is only raised by builds newer than ~v0.1.20. Still carries diagnostic SPR rows in the START menu. Fan-art sprite swap sourced from Bulbagarden Archives; personal use."
 }
