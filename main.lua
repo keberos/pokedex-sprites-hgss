@@ -89,7 +89,58 @@ return function(mod)
     return cache[species] or nil
   end
 
-  local diag = { hook = 0, new = 0, last = "NONE", hit = false }
+  -- ------- why the true-colour mark has to follow the SPRITE, not its box
+  --
+  -- markTrueColor re-blits the rect it is given without the SGB shade pass.
+  -- Handed the sprite's whole bounding box that also re-blits every
+  -- TRANSPARENT pixel in it, which paints the page background behind them in
+  -- raw white instead of the BROWNMON brown -- a grey slab around the art.
+  -- The dex page's mon-pic zone is tiles (1,1,8,8), i.e. y 8..72, so a tall
+  -- sprite drawn at y = max(0, 60 - h) reached ABOVE that zone and broke the
+  -- brown frame at the top of the page.
+  --
+  -- So each sprite carries a mask instead: one rect per horizontal span of
+  -- opaque pixels, with vertically identical spans merged into a single
+  -- taller rect. Nothing transparent is ever marked, so the page keeps its
+  -- own colour right up to the edge of the art. Built once per species from
+  -- the ImageData and cached, because it is pure pixel work.
+  local maskCache = {}
+  local function maskFor(species)
+    if maskCache[species] ~= nil then return maskCache[species] or nil end
+    local rel = ART[species]
+    local ok, data = rel and pcall(love.image.newImageData, mod.assets:path(rel))
+    if not ok or not data then maskCache[species] = false return nil end
+    local w, h = data:getDimensions()
+    local rects, open = {}, nil
+    for y = 0, h - 1 do
+      local minx, maxx
+      for x = 0, w - 1 do
+        local _, _, _, a = data:getPixel(x, y)
+        if a > 0 then
+          if not minx then minx = x end
+          maxx = x
+        end
+      end
+      if minx then
+        local rw = maxx - minx + 1
+        if open and open.x == minx and open.w == rw and open.y + open.h == y then
+          open.h = open.h + 1
+        else
+          open = { x = minx, y = y, w = rw, h = 1 }
+          rects[#rects + 1] = open
+        end
+      else
+        open = nil -- a fully blank row breaks the run
+      end
+    end
+    maskCache[species] = rects
+    return rects
+  end
+
+  mod.options:define({
+    { key = "ball", label = "CAUGHT BALL", type = "choice", default = "modern",
+      choices = { { "MODERN", "modern" }, { "VANILLA", "vanilla" } } },
+  })
 
   -- ------- the swap: wrap DexEntryMenu.new and replace the finished pic
   --
@@ -104,29 +155,27 @@ return function(mod)
 
     function DexEntryMenu.new(game, speciesOrOpts, onDone)
       local inst = originalNew(game, speciesOrOpts, onDone)
-      diag.new = diag.new + 1
       -- never let a swap failure take the dex page down: the vanilla screen
       -- the original already built is a complete, working fallback
       pcall(function()
         -- def.id is the species id the extractor stamped, so the local
         -- resolveArgs (which cannot be reached from here) is not needed
         local species = inst and inst.def and inst.def.id
-        diag.last = tostring(species)
-        diag.hit = species ~= nil and ART[species] ~= nil
         local img = species and imageFor(species)
         if not img then return end
         inst.sprite = img
-        -- full-colour art has to sit out the SGB shade remap, which keys on
-        -- the RED channel and would return a baked red as white
-        inst.spriteTrueColor = true
+        -- deliberately NOT setting inst.spriteTrueColor: on an engine that
+        -- has that plumbing it would mark the sprite's whole bounding box,
+        -- which is the grey-slab bug described above. The draw wrapper below
+        -- marks the art's real silhouette instead, identically on every
+        -- engine version.
+        inst._pokedexSpritesSpecies = species
       end)
       return inst
     end
 
-    -- Belt and braces for engines older than the trueColor plumbing: mark the
-    -- pic's rect for the unshaded re-blit directly. On a build whose render
-    -- already marked it this just appends an identical rect, which re-blits
-    -- the same pixels twice and looks the same.
+    -- Mark the swapped-in art for the unshaded re-blit, span by span, so the
+    -- colour survives the SGB pass without repainting the page around it.
     if DexEntryMenu.draw then
       if not DexEntryMenu._pokedexSpritesOriginalDraw then
         DexEntryMenu._pokedexSpritesOriginalDraw = DexEntryMenu.draw
@@ -135,11 +184,18 @@ return function(mod)
       function DexEntryMenu:draw(...)
         local result = originalDraw(self, ...)
         pcall(function()
-          local img = self.sprite
-          if not (img and self.spriteTrueColor) then return end
-          local w, h = img:getDimensions()
-          require("src.render.PaletteFX")
-            .markTrueColor(8, math.max(0, 60 - h), w, h)
+          local species = self._pokedexSpritesSpecies
+          local img = species and self.sprite
+          if not img then return end
+          local mask = maskFor(species)
+          if not mask then return end
+          -- the same origin DexEntryMenu.render uses for the pic
+          local ox = 8
+          local oy = math.max(0, 60 - select(2, img:getDimensions()))
+          local PaletteFX = require("src.render.PaletteFX")
+          for _, r in ipairs(mask) do
+            PaletteFX.markTrueColor(ox + r.x, oy + r.y, r.w, r.h)
+          end
         end)
         return result
       end
@@ -152,26 +208,105 @@ return function(mod)
   -- its own image straight from Sprites.path without constructing the screen.
   mod.hooks:wrap("pokemon.sprite", function(next, path, ctx)
     if ctx and ctx.kind == "dex" and ctx.side == "front" then
-      diag.hook = diag.hook + 1
       local rel = ART[ctx.species]
       if rel then return mod.assets:path(rel) end
     end
     return next(path, ctx)
   end)
 
-  -- ------- diagnostic rows (removed once this is confirmed working)
-  mod.hooks:wrap("ui.start_menu.items", function(next, game, items)
-    local out = next(game, items)
-    if type(out) ~= "table" then return out end
-    local screens = game and game.data and game.data.screens
-    local owner = (screens and screens.DexEntryMenu) and "MOD" or "ENG"
-    local noop = function() end
-    out = mod.ui.insertBefore(out, "SAVE",
-      { label = "SPR H" .. diag.hook .. " N" .. diag.new, onSelect = noop })
-    out = mod.ui.insertBefore(out, "SAVE",
-      { label = "SPR " .. diag.last .. (diag.hit and " HIT" or " MISS"),
-        onSelect = noop })
-    return mod.ui.insertBefore(out, "SAVE",
-      { label = "SPR SCR " .. owner, onSelect = noop })
-  end)
+  -- ------- the caught marker on the dex list
+  --
+  -- ListMenu:draw paints it inline as a flat black disc: a filled circle, a
+  -- white band across the middle, and a small filled centre dot. There is no
+  -- asset behind it and no hook over it, so the only way in is to wrap the
+  -- draw and repaint the marker on top of the one the original just made.
+  --
+  -- Safe to wrap the SHARED list menu because `item.ball` is set in exactly
+  -- one place in the engine -- src/ui/PokedexMenu.lua, on owned entries -- so
+  -- every other list (bag, party, shops, PC) draws no ball and is untouched.
+  --
+  -- Geometry is recomputed the same way the original does it rather than
+  -- guessed: the ball sits one blank glyph past the label, measured with
+  -- Font.width in glyph advances, because NIDORAN's gender signs are
+  -- multi-byte and a byte count pushes their ball 16px right (engine #285).
+  --
+  -- Colour survives because the dex list runs under the SGB "BROWNMON"
+  -- palette, whose shade pass keys on the RED channel -- a baked red would
+  -- come back white. markTrueColor exempts the marker's rect from that pass,
+  -- the same escape hatch the entry-page sprite uses above.
+  local okList, ListMenu = pcall(require, "src.ui.ListMenu")
+  local okFont, Font = pcall(require, "src.render.Font")
+  if okList and okFont and type(ListMenu) == "table" and ListMenu.draw then
+    if not ListMenu._pokedexSpritesOriginalDraw then
+      ListMenu._pokedexSpritesOriginalDraw = ListMenu.draw
+    end
+    local originalListDraw = ListMenu._pokedexSpritesOriginalDraw
+
+    local R = 4          -- outer radius; the vanilla disc is 3.5, so this covers it
+    local INK   = { 0.09, 0.09, 0.09 }
+    local RED   = { 0.85, 0.16, 0.16 }
+    local WHITE = { 0.97, 0.97, 0.97 }
+
+    local function setColor(c) love.graphics.setColor(c[1], c[2], c[3], 1) end
+
+    -- The marker gets the same treatment as the entry-page sprite: mark the
+    -- DISC, not the square around it, or the four corners of the box re-blit
+    -- the brown list background as raw white and every caught row grows a
+    -- pale square. Seven merged spans cover a radius-4 circle exactly.
+    local DISC = {}
+    do
+      local open
+      for dy = -R, R do
+        local half = math.floor(math.sqrt(R * R - dy * dy))
+        local x, w = -half, half * 2 + 1
+        if open and open.x == x and open.w == w and open.y + open.h == dy then
+          open.h = open.h + 1
+        else
+          open = { x = x, y = dy, w = w, h = 1 }
+          DISC[#DISC + 1] = open
+        end
+      end
+    end
+
+    local function drawBall(bx, by)
+      -- body: ink disc, white underneath, red poured over the top half.
+      -- The top half is angles pi..2pi because LOVE's y axis points down,
+      -- so sin is negative -- that arc is the half above the centre line.
+      setColor(INK)
+      love.graphics.circle("fill", bx, by, R)
+      setColor(WHITE)
+      love.graphics.circle("fill", bx, by, R - 1)
+      setColor(RED)
+      love.graphics.arc("fill", "pie", bx, by, R - 1, math.pi, math.pi * 2)
+      -- the band, then the release button sitting on top of it
+      setColor(INK)
+      love.graphics.rectangle("fill", bx - R, by - 0.7, R * 2, 1.4)
+      love.graphics.circle("fill", bx, by, 1.9)
+      setColor(WHITE)
+      love.graphics.circle("fill", bx, by, 1.1)
+    end
+
+    function ListMenu:draw(...)
+      local result = originalListDraw(self, ...)
+      if mod.options:get("ball") == "vanilla" then return result end
+      pcall(function()
+        local PaletteFX = require("src.render.PaletteFX")
+        for row = 1, (self.rows or 0) do
+          local item = self.items and self.items[(self.scroll or 0) + row]
+          if not item then break end
+          if item.ball then
+            local bx = 16 + Font.width(item.label) + 8 + 3
+            local by = 8 + row * 16 + 3
+            drawBall(bx, by)
+            for _, d in ipairs(DISC) do
+              PaletteFX.markTrueColor(bx + d.x, by + d.y, d.w, d.h)
+            end
+          end
+        end
+      end)
+      -- the original left the pen black for the rows it draws after this
+      love.graphics.setColor(0, 0, 0, 1)
+      return result
+    end
+  end
 end

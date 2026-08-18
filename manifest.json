@@ -1,7 +1,7 @@
 {
   "id": "pokedex-sprites-hgss",
   "name": "Pokedex Sprites (HGSS)",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -15,5 +15,5 @@
   "dependencies": [],
   "optional_dependencies": [],
   "conflicts": [],
-  "description": "Replaces the Pokedex ENTRY PAGE art (the screen reached by highlighting a caught Pokemon and choosing DATA) with HeartGold/SoulSilver-style sprites for all 151 species. The Gen 1 dex LIST draws no sprite at all, so it never changes. Battle, party summary, evolution, Hall of Fame and every other sprite site keep vanilla art. 0.3.0 swaps by wrapping DexEntryMenu.new so it works on every engine version -- the pokemon.sprite hook 0.1.0 relied on is only raised by builds newer than ~v0.1.20. Still carries diagnostic SPR rows in the START menu. Fan-art sprite swap sourced from Bulbagarden Archives; personal use."
+  "description": "Replaces the Pokedex ENTRY PAGE art (highlight a caught Pokemon, choose DATA) with HeartGold/SoulSilver-style sprites for all 151 species, and repaints the caught-species marker on the dex list as a proper red-and-white Poke Ball instead of a flat black disc (CAUGHT BALL option: MODERN or VANILLA). The Gen 1 dex list draws no sprite of its own, so only the marker changes there. Battle, party summary, evolution, Hall of Fame and every other sprite site keep vanilla art. Fan-art sprite swap sourced from Bulbagarden Archives; personal use."
 }

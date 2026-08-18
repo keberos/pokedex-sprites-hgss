@@ -63,25 +63,47 @@ Source: HeartGold/SoulSilver sprite rips from
 only** -- see `LICENSE`. This is an unofficial fan-art swap, not affiliated with or
 endorsed by Nintendo, Creatures Inc., GAME FREAK inc., or The Pokemon Company.
 
-## Diagnostic rows
+## The caught marker
 
-This build still adds three temporary rows to the START menu, kept until the swap is
-confirmed working in play:
+The Pokédex list marks every caught species with a small ball. Vanilla draws it inline in
+`ListMenu:draw` as a flat black disc — a filled circle, a white band, a centre dot — with no
+asset behind it and no hook over it. This mod repaints it as a proper Poké Ball: red top,
+white bottom, dark band and outline, white release button.
 
-| Row | Meaning |
-| --- | --- |
-| `SPR H<n> N<n>` | `pokemon.sprite` calls, and `DexEntryMenu.new` calls |
-| `SPR <ID> HIT/MISS` | last dex species built, and whether the art table had it |
-| `SPR SCR ENG/MOD` | whether the engine or another mod owns the `DexEntryMenu` screen |
+Set **CAUGHT BALL** to `VANILLA` on the mod's page in the mod manager to keep the original
+flat marker.
 
-`N` rising while `H` stays at 0 is the expected shape on an older engine, and means the
-screen patch is carrying the swap on its own. `SCR MOD` would mean a different mod has
-replaced the dex entry screen wholesale, in which case neither route can reach it.
+Wrapping the shared `ListMenu` is safe because `item.ball` is set in exactly one place in
+the whole engine — `src/ui/PokedexMenu.lua`, on owned entries — so the bag, party, shops and
+PC lists draw no ball and are untouched. The marker's position is recomputed the way the
+original does it, with `Font.width` in glyph advances rather than a byte count, because
+NIDORAN's gender signs are multi-byte and a byte count pushes their ball 16px right.
+
+## Why the art is masked, not boxed
+
+Full-colour art has to sit out the SGB shade pass, which keys on the **red** channel — a
+baked red would otherwise come back white. `PaletteFX.markTrueColor` is the escape hatch,
+but it re-blits *the rect it is given*, including every transparent pixel in it. Handed a
+sprite's whole bounding box it repaints the page background behind the art in raw white
+instead of BROWNMON brown, which reads as a grey slab. The dex page's mon-pic palette zone
+is tiles (1,1,8,8) — pixels y 8–72 — so a tall sprite drawn at `y = max(0, 60 - h)` reached
+*above* that zone and broke the brown frame across the top of the page.
+
+Two fixes, both in 0.4.0:
+
+- Sprites are capped at **56px tall**, the same limit vanilla Gen 1 front pics have, so the
+  engine places them at `y = 4` exactly as it places vanilla art instead of jamming them to
+  `y = 0`.
+- Each sprite carries a **mask** — one rect per horizontal span of opaque pixels, with
+  identical spans merged vertically (about 40 rects for a typical sprite). Only those spans
+  are marked, so nothing transparent is ever re-blitted and the page keeps its own colour
+  right up to the edge of the art. The caught-marker ball gets the same treatment with a
+  seven-span disc mask, so it doesn't grow pale square corners.
+
+For the same reason the mod deliberately does **not** set `spriteTrueColor`: on an engine
+that has that plumbing, it would mark the whole bounding box and reintroduce the slab.
 
 ## Status
 
-Not yet confirmed working in play. 0.1.0's hook-only approach was verified inert by a
-diagnostic build; 0.3.0's screen patch addresses that cause but has not been seen rendering
-yet. Worth checking: a few entries at different sprite sizes (a tall one like Alakazam, a
-wide one like Arcanine), that the colours look right rather than washed out, and that
-battle/summary art is still vanilla.
+**Confirmed working in play** — the entry-page sprites render correctly. The caught-marker
+ball and the tall-sprite border fix landed in 0.4.0 and have not been seen yet.
