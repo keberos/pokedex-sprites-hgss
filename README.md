@@ -7,10 +7,12 @@ Install with **Launcher → MODS → Import mod .zip**.
 
 ## What it changes
 
-Both places the Pokedex shows a Pokemon's picture:
+The **Pokédex entry page** — the screen with the species name, height/weight and dex text.
 
-- The **list-view preview** (the small pic next to a highlighted entry).
-- The **full entry page** (species, height/weight, dex text).
+**Where to actually see it:** open the Pokédex, highlight a Pokémon you've caught, and
+choose **DATA**. The Pokédex *list* itself draws no sprite at all in Gen 1 — scrolling it
+will never look different, because there is no picture there to change. (Yellow's **PRNT**
+printer action renders the same entry page, so it picks up the new art too.)
 
 Nothing else. Battle sprites, the party summary screen, evolution, Hall of Fame, trade,
 title screen, and Professor Oak's lab all keep their original art untouched.
@@ -20,10 +22,11 @@ title screen, and Professor Oak's lab all keep their original art untouched.
 `src/pokemon/Sprites.lua` is the one seam every sprite draw in the engine goes through, and
 it raises a public `pokemon.sprite` hook carrying `ctx.kind` -- `"battle"`, `"dex"`,
 `"summary"`, `"evolution"`, `"hof"`, `"trade"`, `"title"`, `"oak"`, `"credits"`,
-`"overworld"` -- so a hook can tell which screen is asking. Both Pokedex call sites
-(`src/ui/PokedexMenu.lua`, `src/ui/DexEntryMenu.lua`) pass `kind = "dex"`; every other site
-passes something else. This mod answers the hook only when `ctx.kind == "dex"` and returns a
-path into its own bundled `sprites/` folder; every other call falls through untouched to
+`"overworld"` -- so a hook can tell which screen is asking. The two `kind = "dex"` call
+sites are `src/ui/DexEntryMenu.lua` (the entry page) and `src/ui/PokedexMenu.lua`'s
+Yellow-only PRNT action, which renders that same page to a PNG; every other site passes
+something else. This mod answers the hook only when `ctx.kind == "dex"` and returns a path
+into its own bundled `sprites/` folder; every other call falls through untouched to
 `next(path, ctx)`.
 
 Because that's the entire mechanism, this mod requests **no permissions** -- it never
