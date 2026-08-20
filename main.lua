@@ -104,14 +104,30 @@ return function(mod)
   -- taller rect. Nothing transparent is ever marked, so the page keeps its
   -- own colour right up to the edge of the art. Built once per species from
   -- the ImageData and cached, because it is pure pixel work.
-  local maskCache = {}
-  local function maskFor(species)
-    if maskCache[species] ~= nil then return maskCache[species] or nil end
+  -- ------- 1.1.0: why SPANS alone was not enough
+  --
+  -- The row-exact mask emits a rect per horizontal run, and a jagged
+  -- silhouette makes most of those ONE PIXEL TALL (about 40 rects for a
+  -- typical sprite, 53 at worst). A 1px zone is the first thing to be lost
+  -- when the 160x144 UI canvas is scaled to a real screen at a non-integer
+  -- factor, and engine v0.2.13 rerouted the UI zone blit through a new
+  -- clipToView(). Symptom: the art swaps in but only part of it keeps its
+  -- colour, worst on the most jagged sprites -- "some monotone, some missing
+  -- most of the colour".
+  --
+  -- BANDS is the fix: take the union of the row spans over each 8px band, so
+  -- a 56px sprite yields at most 7 rects and every one is 8px tall. Chunky
+  -- enough to survive any scale, still hugging the silhouette per band rather
+  -- than boxing the whole sprite -- a band only exists where art exists, so
+  -- the brown border above a tall sprite stays intact.
+  local rowCache = {}
+  local function rowSpans(species)
+    if rowCache[species] ~= nil then return rowCache[species] or nil end
     local rel = ART[species]
     local ok, data = rel and pcall(love.image.newImageData, mod.assets:path(rel))
-    if not ok or not data then maskCache[species] = false return nil end
+    if not ok or not data then rowCache[species] = false return nil end
     local w, h = data:getDimensions()
-    local rects, open = {}, nil
+    local rows = { h = h, w = w }
     for y = 0, h - 1 do
       local minx, maxx
       for x = 0, w - 1 do
@@ -121,26 +137,80 @@ return function(mod)
           maxx = x
         end
       end
-      if minx then
-        local rw = maxx - minx + 1
-        if open and open.x == minx and open.w == rw and open.y + open.h == y then
+      rows[y] = minx and { minx, maxx } or false
+    end
+    rowCache[species] = rows
+    return rows
+  end
+
+  local BAND = 8
+  local maskCache = { spans = {}, bands = {}, box = {} }
+
+  local function buildSpans(rows)
+    local rects, open = {}, nil
+    for y = 0, rows.h - 1 do
+      local s = rows[y]
+      if s then
+        local rw = s[2] - s[1] + 1
+        if open and open.x == s[1] and open.w == rw and open.y + open.h == y then
           open.h = open.h + 1
         else
-          open = { x = minx, y = y, w = rw, h = 1 }
+          open = { x = s[1], y = y, w = rw, h = 1 }
           rects[#rects + 1] = open
         end
       else
         open = nil -- a fully blank row breaks the run
       end
     end
-    maskCache[species] = rects
+    return rects
+  end
+
+  local function buildBands(rows)
+    local rects = {}
+    for top = 0, rows.h - 1, BAND do
+      local minx, maxx
+      local bottom = math.min(top + BAND, rows.h) - 1
+      for y = top, bottom do
+        local s = rows[y]
+        if s then
+          if not minx or s[1] < minx then minx = s[1] end
+          if not maxx or s[2] > maxx then maxx = s[2] end
+        end
+      end
+      if minx then
+        rects[#rects + 1] = { x = minx, y = top,
+                              w = maxx - minx + 1, h = bottom - top + 1 }
+      end
+    end
+    return rects
+  end
+
+  local function maskFor(species, style)
+    local bucket = maskCache[style]
+    if not bucket then return nil end
+    if bucket[species] ~= nil then return bucket[species] or nil end
+    local rows = rowSpans(species)
+    if not rows then bucket[species] = false return nil end
+    local rects
+    if style == "spans" then rects = buildSpans(rows)
+    elseif style == "box" then rects = { { x = 0, y = 0, w = rows.w, h = rows.h } }
+    else rects = buildBands(rows) end
+    bucket[species] = rects
     return rects
   end
 
   mod.options:define({
     { key = "ball", label = "CAUGHT BALL", type = "choice", default = "modern",
       choices = { { "MODERN", "modern" }, { "VANILLA", "vanilla" } } },
+    -- BANDS is the default and the one to keep; the others are here so a bad
+    -- result can be A/B'd in game instead of guessed at from source.
+    { key = "mask", label = "DEX COLOR", type = "choice", default = "bands",
+      choices = { { "BANDS", "bands" }, { "EXACT", "spans" },
+                  { "BOX", "box" }, { "OFF", "off" } } },
   })
+
+  -- Temporary, for this round of diagnosis only -- see the SPR rows below.
+  local diag = { rects = 0, species = "NONE", style = "?" }
 
   -- ------- the swap: wrap DexEntryMenu.new and replace the finished pic
   --
@@ -184,10 +254,12 @@ return function(mod)
       function DexEntryMenu:draw(...)
         local result = originalDraw(self, ...)
         pcall(function()
+          local style = mod.options:get("mask")
+          if style == "off" then return end
           local species = self._pokedexSpritesSpecies
           local img = species and self.sprite
           if not img then return end
-          local mask = maskFor(species)
+          local mask = maskFor(species, style)
           if not mask then return end
           -- the same origin DexEntryMenu.render uses for the pic
           local ox = 8
@@ -196,6 +268,7 @@ return function(mod)
           for _, r in ipairs(mask) do
             PaletteFX.markTrueColor(ox + r.x, oy + r.y, r.w, r.h)
           end
+          diag.rects, diag.species, diag.style = #mask, species, style
         end)
         return result
       end
@@ -309,4 +382,32 @@ return function(mod)
       return result
     end
   end
+
+  -- ------- temporary diagnostic rows (out again once the cause is settled)
+  --
+  -- Engine v0.2.13 added PaletteFX.honorsTrueColor(), and Renderer's
+  -- withTrueColor() now DISCARDS every marked rect unless it returns true --
+  -- for Gen 1 that means the COLORS mode is ADVANCED (`redpp`). These rows
+  -- report that answer directly rather than having it inferred from how the
+  -- screen looks, plus how many rects the current mask style actually emits.
+  mod.hooks:wrap("ui.start_menu.items", function(next, game, items)
+    local out = next(game, items)
+    if type(out) ~= "table" then return out end
+    local noop = function() end
+    local okP, PaletteFX = pcall(require, "src.render.PaletteFX")
+    local mode, honors = "?", "?"
+    if okP and PaletteFX then
+      mode = tostring(PaletteFX.mode)
+      if type(PaletteFX.honorsTrueColor) == "function" then
+        local ok, v = pcall(PaletteFX.honorsTrueColor)
+        honors = ok and (v and "Y" or "N") or "ERR"
+      else
+        honors = "OLD" -- pre-0.2.13: true colour was unconditional
+      end
+    end
+    out = mod.ui.insertBefore(out, "SAVE",
+      { label = "TC " .. mode .. " " .. honors, onSelect = noop })
+    return mod.ui.insertBefore(out, "SAVE",
+      { label = "TC " .. diag.style .. " R" .. diag.rects, onSelect = noop })
+  end)
 end
