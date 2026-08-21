@@ -303,8 +303,15 @@ return function(mod)
           local mask = maskFor(species, style == "debug" and "bands" or style)
           if not mask then diag.stage = "NOMASK" return end
           local w, h = img:getDimensions()
-          -- vanilla's own placement, now applied by us
-          local ox = 8
+          -- Centred in the mon-pic palette zone, which is tiles (1,1,8,8) --
+          -- x 8..71, so 64px wide. 1.2.0 drew flush at x = 8 and narrow
+          -- sprites visibly hugged the left edge; the DEBUG screenshots had
+          -- already measured the real offset (Charmander, 34 wide, sat about
+          -- 15px right of 8, and 8 + (64-34)/2 = 23). Vertical stays
+          -- bottom-aligned on y = 60, which is vanilla's own baseline.
+          -- Marks below use this same origin, so art and mask stay locked
+          -- together whatever the arithmetic says.
+          local ox = 8 + math.max(0, math.floor((64 - w) / 2))
           local oy = math.max(0, 60 - h)
           love.graphics.setColor(1, 1, 1, 1)
           love.graphics.draw(img, ox, oy)
