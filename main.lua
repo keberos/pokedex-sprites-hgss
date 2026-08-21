@@ -35,10 +35,22 @@
 -- nothing, and it also covers the PRNT printer path, which builds its own
 -- image without going through DexEntryMenu.new at all.
 --
--- Art: HeartGold/SoulSilver sprite rips from Bulbagarden Archives, trimmed
--- to their opaque bounds and fit to <=64x60px so they sit on the entry page
--- without crowding the stats column at x=72. Personal fan-art reskin; not
--- affiliated with or endorsed by Nintendo, Game Freak, or The Pokemon Company.
+-- ------- and why it also draws the pic itself (1.2.0)
+--
+-- Marking at the origin src/ui/DexEntryMenu.lua's render() uses (x = 8) put
+-- the marks LEFT of the art on a real device, further left the narrower the
+-- sprite -- the pic is centred by something outside this mod, and the engine
+-- source still reads x = 8 at v0.2.14. Rather than guess that formula, the
+-- draw wrapper hides self.sprite from the original, blits the image itself
+-- and marks the same rects in the same breath. The origin is then a fact
+-- this code owns, so art and mask cannot drift apart.
+--
+-- Art: HeartGold/SoulSilver sprite rips from Bulbagarden Archives, trimmed to
+-- their opaque bounds and fit to <=64x56px -- vanilla's own front-pic limit --
+-- so they sit on the entry page without crowding the stats column at x=72.
+-- Oversized ones are resampled with NEAREST, never a smooth filter, or the
+-- hard edges anti-alias into mush. Personal fan-art reskin; not affiliated
+-- with or endorsed by Nintendo, Game Freak, or The Pokemon Company.
 
 return function(mod)
   local SPECIES = {
@@ -102,27 +114,21 @@ return function(mod)
   -- sprite drawn at y = max(0, 60 - h) reached ABOVE that zone and broke the
   -- brown frame at the top of the page.
   --
-  -- So each sprite carries a mask instead: one rect per horizontal span of
-  -- opaque pixels, with vertically identical spans merged into a single
-  -- taller rect. Nothing transparent is ever marked, so the page keeps its
-  -- own colour right up to the edge of the art. Built once per species from
-  -- the ImageData and cached, because it is pure pixel work.
-  -- ------- 1.1.0: why SPANS alone was not enough
+  -- So each sprite carries a mask instead, built once per species from its
+  -- ImageData and cached, because it is pure pixel work.
   --
-  -- The row-exact mask emits a rect per horizontal run, and a jagged
-  -- silhouette makes most of those ONE PIXEL TALL (about 40 rects for a
-  -- typical sprite, 53 at worst). A 1px zone is the first thing to be lost
-  -- when the 160x144 UI canvas is scaled to a real screen at a non-integer
-  -- factor, and engine v0.2.13 rerouted the UI zone blit through a new
-  -- clipToView(). Symptom: the art swaps in but only part of it keeps its
-  -- colour, worst on the most jagged sprites -- "some monotone, some missing
-  -- most of the colour".
+  -- BANDS (the default) takes the union of the row spans over each 8px band:
+  -- a 56px sprite yields at most 7 rects and every one is 8px tall. EXACT --
+  -- one rect per horizontal run of opaque pixels -- looks tighter on paper but
+  -- makes most of those rects ONE PIXEL TALL, and a 1px zone is the first
+  -- thing lost when the 160x144 canvas is scaled at a non-integer factor.
+  -- Chunky beats precise here. Each band also overlaps 1px into the next:
+  -- abutting rects are re-blitted as separate scissored regions and the join
+  -- can fall on a half pixel neither covers, which showed as a hairline
+  -- through the art every 8px. Re-blitting a row twice is idempotent.
   --
-  -- BANDS is the fix: take the union of the row spans over each 8px band, so
-  -- a 56px sprite yields at most 7 rects and every one is 8px tall. Chunky
-  -- enough to survive any scale, still hugging the silhouette per band rather
-  -- than boxing the whole sprite -- a band only exists where art exists, so
-  -- the brown border above a tall sprite stays intact.
+  -- A band only exists where art exists, so the page keeps its own colour
+  -- around the sprite and the frame above a tall one stays intact.
   local rowCache = {}
   local function rowSpans(species)
     if rowCache[species] ~= nil then return rowCache[species] or nil end
@@ -223,11 +229,8 @@ return function(mod)
     -- result can be A/B'd in game instead of guessed at from source.
     { key = "mask", label = "DEX COLOR", type = "choice", default = "bands",
       choices = { { "BANDS", "bands" }, { "EXACT", "spans" },
-                  { "BOX", "box" }, { "DEBUG", "debug" }, { "OFF", "off" } } },
+                  { "BOX", "box" }, { "OFF", "off" } } },
   })
-
-  -- Temporary, for this round of diagnosis only -- see the SPR rows below.
-  local diag = { rects = 0, species = "NONE", style = "?", stage = "NEVER" }
 
   -- ------- the swap: wrap DexEntryMenu.new and replace the finished pic
   --
@@ -289,31 +292,23 @@ return function(mod)
         local style = "bands"
         local okOpt, chosen = pcall(function() return mod.options:get("mask") end)
         if okOpt and chosen then style = tostring(chosen) end
-        diag.style = style
 
-        if not img or style == "off" then
-          diag.stage = img and "OFF" or (species and "NOIMG" or "NOSPECIES")
-          return originalDraw(self, ...)
-        end
+        if not img or style == "off" then return originalDraw(self, ...) end
 
         -- the original renders the page without a pic; ours goes on after
         self.sprite = nil
         local okDraw, result = pcall(originalDraw, self, ...)
         self.sprite = img
-        if not okDraw then diag.stage = "DRAWERR" return nil end
+        if not okDraw then return nil end
 
         pcall(function()
-          local mask = maskFor(species, style == "debug" and "bands" or style)
-          if not mask then diag.stage = "NOMASK" return end
+          local mask = maskFor(species, style)
+          if not mask then return end
           local w, h = img:getDimensions()
           -- Centred in the mon-pic palette zone, which is tiles (1,1,8,8) --
-          -- x 8..71, so 64px wide. 1.2.0 drew flush at x = 8 and narrow
-          -- sprites visibly hugged the left edge; the DEBUG screenshots had
-          -- already measured the real offset (Charmander, 34 wide, sat about
-          -- 15px right of 8, and 8 + (64-34)/2 = 23). Vertical stays
-          -- bottom-aligned on y = 60, which is vanilla's own baseline.
-          -- Marks below use this same origin, so art and mask stay locked
-          -- together whatever the arithmetic says.
+          -- x 8..71, so 64px wide. Vertical stays bottom-aligned on y = 60,
+          -- vanilla's own baseline. The marks below use this same origin, so
+          -- the art and the mask cannot drift apart.
           local ox = 8 + math.max(0, math.floor((64 - w) / 2))
           local oy = math.max(0, 60 - h)
           love.graphics.setColor(1, 1, 1, 1)
@@ -322,18 +317,6 @@ return function(mod)
           for _, r in ipairs(mask) do
             PaletteFX.markTrueColor(ox + r.x, oy + r.y, r.w, r.h)
           end
-          if style == "debug" then
-            -- drawn INSIDE each marked band, so the outline itself lands in a
-            -- true-colour region and shows its real magenta rather than being
-            -- shade-remapped like everything else on the page
-            love.graphics.setColor(1, 0, 1, 1)
-            for _, r in ipairs(mask) do
-              love.graphics.rectangle("line", ox + r.x + 0.5, oy + r.y + 0.5,
-                                      math.max(1, r.w - 1), math.max(1, r.h - 1))
-            end
-            love.graphics.setColor(1, 1, 1, 1)
-          end
-          diag.rects, diag.species, diag.stage = #mask, species, "OK"
         end)
         return result
       end
@@ -448,31 +431,4 @@ return function(mod)
     end
   end
 
-  -- ------- temporary diagnostic rows (out again once the cause is settled)
-  --
-  -- Engine v0.2.13 added PaletteFX.honorsTrueColor(), and Renderer's
-  -- withTrueColor() now DISCARDS every marked rect unless it returns true --
-  -- for Gen 1 that means the COLORS mode is ADVANCED (`redpp`). These rows
-  -- report that answer directly rather than having it inferred from how the
-  -- screen looks, plus how many rects the current mask style actually emits.
-  mod.hooks:wrap("ui.start_menu.items", function(next, game, items)
-    local out = next(game, items)
-    if type(out) ~= "table" then return out end
-    local noop = function() end
-    local okP, PaletteFX = pcall(require, "src.render.PaletteFX")
-    local mode, honors = "?", "?"
-    if okP and PaletteFX then
-      mode = tostring(PaletteFX.mode)
-      if type(PaletteFX.honorsTrueColor) == "function" then
-        local ok, v = pcall(PaletteFX.honorsTrueColor)
-        honors = ok and (v and "Y" or "N") or "ERR"
-      else
-        honors = "OLD" -- pre-0.2.13: true colour was unconditional
-      end
-    end
-    out = mod.ui.insertBefore(out, "SAVE",
-      { label = "TC " .. mode .. " " .. honors, onSelect = noop })
-    return mod.ui.insertBefore(out, "SAVE",
-      { label = "TC " .. diag.style .. " R" .. diag.rects .. " " .. diag.stage, onSelect = noop })
-  end)
 end

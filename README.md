@@ -89,19 +89,45 @@ instead of BROWNMON brown, which reads as a grey slab. The dex page's mon-pic pa
 is tiles (1,1,8,8) — pixels y 8–72 — so a tall sprite drawn at `y = max(0, 60 - h)` reached
 *above* that zone and broke the brown frame across the top of the page.
 
-Two fixes, both in 0.4.0:
+So each sprite carries a **mask** instead, and the mod draws the pic itself:
 
-- Sprites are capped at **56px tall**, the same limit vanilla Gen 1 front pics have, so the
-  engine places them at `y = 4` exactly as it places vanilla art instead of jamming them to
-  `y = 0`.
-- Each sprite carries a **mask** — one rect per horizontal span of opaque pixels, with
-  identical spans merged vertically (about 40 rects for a typical sprite). Only those spans
-  are marked, so nothing transparent is ever re-blitted and the page keeps its own colour
-  right up to the edge of the art. The caught-marker ball gets the same treatment with a
-  seven-span disc mask, so it doesn't grow pale square corners.
+- **BANDS** (default) marks the union of the row spans over each 8px band — 6–7 regions per
+  sprite, all 8px tall. `EXACT` is row-precise but emits mostly *1px-tall* regions, and a 1px
+  zone is the first thing lost when the 160×144 canvas is scaled at a non-integer factor.
+  Chunky beats precise here.
+- Each band **overlaps 1px** into the next. Abutting regions are re-blitted as separate
+  scissored rects and the join can fall on a half pixel neither covers, which showed as a
+  hairline through the art every 8px. Re-blitting a row twice is idempotent.
+- Sprites are capped at **56px tall**, vanilla's own front-pic limit, and oversized art is
+  resampled with **NEAREST** — a smooth filter anti-aliases pixel art into mush, which reads
+  as "low resolution". The LÖVE image filter is pinned to nearest for the same reason.
+- The mod **draws the pic itself**, centred in the mon-pic zone at `8 + (64 - w) / 2` and
+  bottom-aligned on `y = 60`, then marks using that same origin. Anchoring to
+  `DexEntryMenu.render`'s `x = 8` put the marks left of the art on a real device — the pic is
+  centred by something outside this mod. Owning the blit makes drift impossible.
+- The caught-marker ball gets the same treatment with a seven-span disc mask, so it doesn't
+  grow pale square corners.
 
 For the same reason the mod deliberately does **not** set `spriteTrueColor`: on an engine
 that has that plumbing, it would mark the whole bounding box and reintroduce the slab.
+
+## Requires COLORS = ADVANCED on engine v0.2.13+
+
+That release added `PaletteFX.honorsTrueColor()`, and `Renderer.withTrueColor()` now discards
+**every** marked region unless it returns true — which for Gen 1 means the `ADVANCED` colour
+mode. On SGB or any other mode the sprites still swap in but render in flat shades. The same
+gate applies to the engine's own true-colour art, so it is deliberate policy rather than
+anything specific to this mod.
+
+## Options
+
+| Option | Values | |
+| --- | --- | --- |
+| `CAUGHT BALL` | `MODERN` / `VANILLA` | the dex list's caught marker |
+| `DEX COLOR` | `BANDS` / `EXACT` / `BOX` / `OFF` | how the art is marked for true colour |
+
+`BANDS` is the default. `BOX` is a single region with no internal seams, at the cost of
+re-blitting the transparent part of the sprite's bounding box; both look correct in play.
 
 ## Compatibility
 
@@ -129,8 +155,14 @@ deliberately not done.
 
 ## Status
 
-**1.0.0 — confirmed working in play.** The entry-page sprites were verified in game, and the
-modern caught marker and tall-sprite border fix went out in 0.4.0 ahead of the promotion.
+**1.3.0 — confirmed working in play** on engine v0.2.14, verified in both `BANDS` and `BOX`.
 
-Install with **Launcher → MODS → Import mod .zip**, or through the
-[keberos mod index](https://github.com/keberos/gen1recomp-index).
+1.0.0 rendered correctly on the engine of the day but was carrying a real bug: a truncating
+`local ok, data = rel and pcall(...)` meant the mask never built at all, and an `and`
+expression is adjusted to exactly one value in Lua so `data` was always nil. Engine v0.2.13's
+stricter true-colour path stopped covering for it, which is what made it visible. Fixed in
+1.1.1; 1.2.x then corrected the mark alignment, the seam lines and the resampling. 1.3.0 is
+that work with the diagnostic scaffolding removed.
+
+Install through the [keberos mod index](https://github.com/keberos/gen1recomp-index), or with
+**Launcher → MODS → Import mod .zip**.
