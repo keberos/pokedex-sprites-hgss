@@ -185,8 +185,15 @@ return function(mod)
         end
       end
       if minx then
-        rects[#rects + 1] = { x = minx, y = top,
-                              w = maxx - minx + 1, h = bottom - top + 1 }
+        -- Overlap each band 1px into the next. Abutting rects are re-blitted
+        -- as separate scissored regions, and at a non-integer display scale
+        -- the join between two of them can fall on a half pixel that neither
+        -- covers -- which showed up as a hairline through the art every 8px.
+        -- Re-blitting a row twice is idempotent (same pixels, no shader), so
+        -- an overlap costs nothing and closes the seam.
+        local h = bottom - top + 1
+        if bottom < rows.h - 1 then h = h + 1 end
+        rects[#rects + 1] = { x = minx, y = top, w = maxx - minx + 1, h = h }
       end
     end
     return rects
