@@ -124,7 +124,14 @@ return function(mod)
   local function rowSpans(species)
     if rowCache[species] ~= nil then return rowCache[species] or nil end
     local rel = ART[species]
-    local ok, data = rel and pcall(love.image.newImageData, mod.assets:path(rel))
+    -- `rel and pcall(...)` would truncate to ONE value, leaving data always
+    -- nil -- which is exactly what shipped in 0.4.0 through 1.1.0: the mask
+    -- bailed for every species, nothing was ever marked, and the art fell
+    -- through to the shade pass. The engine hit the identical bug in this
+    -- very screen (DexEntryMenu.lua, #307: "the guard has to be a statement
+    -- for pcall's second return to survive"). Keep it a statement.
+    local ok, data = false, nil
+    if rel then ok, data = pcall(love.image.newImageData, mod.assets:path(rel)) end
     if not ok or not data then rowCache[species] = false return nil end
     local w, h = data:getDimensions()
     local rows = { h = h, w = w }
@@ -210,7 +217,7 @@ return function(mod)
   })
 
   -- Temporary, for this round of diagnosis only -- see the SPR rows below.
-  local diag = { rects = 0, species = "NONE", style = "?" }
+  local diag = { rects = 0, species = "NONE", style = "?", stage = "NEVER" }
 
   -- ------- the swap: wrap DexEntryMenu.new and replace the finished pic
   --
@@ -255,12 +262,17 @@ return function(mod)
         local result = originalDraw(self, ...)
         pcall(function()
           local style = mod.options:get("mask")
-          if style == "off" then return end
+          -- record the stage as we go, so a failure says WHERE it stopped
+          -- instead of leaving the initial "? R0" that covered both "the
+          -- wrapper never ran" and "the mask came back empty"
+          diag.style, diag.stage = tostring(style), "ENTER"
+          if style == "off" then diag.stage = "OFF" return end
           local species = self._pokedexSpritesSpecies
+          diag.stage = species and "SPECIES" or "NOSPECIES"
           local img = species and self.sprite
-          if not img then return end
+          if not img then diag.stage = "NOIMG" return end
           local mask = maskFor(species, style)
-          if not mask then return end
+          if not mask then diag.stage = "NOMASK" return end
           -- the same origin DexEntryMenu.render uses for the pic
           local ox = 8
           local oy = math.max(0, 60 - select(2, img:getDimensions()))
@@ -268,7 +280,7 @@ return function(mod)
           for _, r in ipairs(mask) do
             PaletteFX.markTrueColor(ox + r.x, oy + r.y, r.w, r.h)
           end
-          diag.rects, diag.species, diag.style = #mask, species, style
+          diag.rects, diag.species, diag.stage = #mask, species, "OK"
         end)
         return result
       end
@@ -408,6 +420,6 @@ return function(mod)
     out = mod.ui.insertBefore(out, "SAVE",
       { label = "TC " .. mode .. " " .. honors, onSelect = noop })
     return mod.ui.insertBefore(out, "SAVE",
-      { label = "TC " .. diag.style .. " R" .. diag.rects, onSelect = noop })
+      { label = "TC " .. diag.style .. " R" .. diag.rects .. " " .. diag.stage, onSelect = noop })
   end)
 end
