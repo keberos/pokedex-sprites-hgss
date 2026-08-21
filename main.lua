@@ -258,28 +258,49 @@ return function(mod)
         DexEntryMenu._pokedexSpritesOriginalDraw = DexEntryMenu.draw
       end
       local originalDraw = DexEntryMenu._pokedexSpritesOriginalDraw
+      -- ------- 1.2.0: draw the pic ourselves so the mark cannot drift
+      --
+      -- Up to 1.1.2 this marked at (8, max(0, 60 - h)) because that is what
+      -- src/ui/DexEntryMenu.lua's render() does. The DEBUG build proved that
+      -- assumption wrong on the real device: the outlines landed to the LEFT
+      -- of the art, and by MORE for narrower sprites -- the signature of the
+      -- pic being centred somewhere this mod does not control, while the mask
+      -- was pinned to a fixed left edge. (The engine's own source still reads
+      -- x = 8 at v0.2.14, so whatever places it is not that call.)
+      --
+      -- Chasing the right formula would be another guess. Instead: hide the
+      -- sprite from the original draw, then blit it here and mark the same
+      -- rects in the same breath. Origin is now a fact this code owns rather
+      -- than a claim about someone else's draw call, so the mask and the art
+      -- cannot disagree no matter who else moves the pic.
       function DexEntryMenu:draw(...)
-        local result = originalDraw(self, ...)
+        local species = self._pokedexSpritesSpecies
+        local img = species and self.sprite
+        local style = "bands"
+        local okOpt, chosen = pcall(function() return mod.options:get("mask") end)
+        if okOpt and chosen then style = tostring(chosen) end
+        diag.style = style
+
+        if not img or style == "off" then
+          diag.stage = img and "OFF" or (species and "NOIMG" or "NOSPECIES")
+          return originalDraw(self, ...)
+        end
+
+        -- the original renders the page without a pic; ours goes on after
+        self.sprite = nil
+        local okDraw, result = pcall(originalDraw, self, ...)
+        self.sprite = img
+        if not okDraw then diag.stage = "DRAWERR" return nil end
+
         pcall(function()
-          local style = mod.options:get("mask")
-          -- record the stage as we go, so a failure says WHERE it stopped
-          -- instead of leaving the initial "? R0" that covered both "the
-          -- wrapper never ran" and "the mask came back empty"
-          diag.style, diag.stage = tostring(style), "ENTER"
-          if style == "off" then diag.stage = "OFF" return end
-          local species = self._pokedexSpritesSpecies
-          diag.stage = species and "SPECIES" or "NOSPECIES"
-          local img = species and self.sprite
-          if not img then diag.stage = "NOIMG" return end
-          -- DEBUG marks the same regions BANDS does, then outlines each one
-          -- so a screenshot shows exactly which pixels were marked. Static
-          -- reasoning said these bands cover the whole sprite; the screen
-          -- disagreed, so the screen gets to show its working.
           local mask = maskFor(species, style == "debug" and "bands" or style)
           if not mask then diag.stage = "NOMASK" return end
-          -- the same origin DexEntryMenu.render uses for the pic
+          local w, h = img:getDimensions()
+          -- vanilla's own placement, now applied by us
           local ox = 8
-          local oy = math.max(0, 60 - select(2, img:getDimensions()))
+          local oy = math.max(0, 60 - h)
+          love.graphics.setColor(1, 1, 1, 1)
+          love.graphics.draw(img, ox, oy)
           local PaletteFX = require("src.render.PaletteFX")
           for _, r in ipairs(mask) do
             PaletteFX.markTrueColor(ox + r.x, oy + r.y, r.w, r.h)
