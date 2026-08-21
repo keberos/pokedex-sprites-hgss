@@ -213,7 +213,7 @@ return function(mod)
     -- result can be A/B'd in game instead of guessed at from source.
     { key = "mask", label = "DEX COLOR", type = "choice", default = "bands",
       choices = { { "BANDS", "bands" }, { "EXACT", "spans" },
-                  { "BOX", "box" }, { "OFF", "off" } } },
+                  { "BOX", "box" }, { "DEBUG", "debug" }, { "OFF", "off" } } },
   })
 
   -- Temporary, for this round of diagnosis only -- see the SPR rows below.
@@ -271,7 +271,11 @@ return function(mod)
           diag.stage = species and "SPECIES" or "NOSPECIES"
           local img = species and self.sprite
           if not img then diag.stage = "NOIMG" return end
-          local mask = maskFor(species, style)
+          -- DEBUG marks the same regions BANDS does, then outlines each one
+          -- so a screenshot shows exactly which pixels were marked. Static
+          -- reasoning said these bands cover the whole sprite; the screen
+          -- disagreed, so the screen gets to show its working.
+          local mask = maskFor(species, style == "debug" and "bands" or style)
           if not mask then diag.stage = "NOMASK" return end
           -- the same origin DexEntryMenu.render uses for the pic
           local ox = 8
@@ -279,6 +283,17 @@ return function(mod)
           local PaletteFX = require("src.render.PaletteFX")
           for _, r in ipairs(mask) do
             PaletteFX.markTrueColor(ox + r.x, oy + r.y, r.w, r.h)
+          end
+          if style == "debug" then
+            -- drawn INSIDE each marked band, so the outline itself lands in a
+            -- true-colour region and shows its real magenta rather than being
+            -- shade-remapped like everything else on the page
+            love.graphics.setColor(1, 0, 1, 1)
+            for _, r in ipairs(mask) do
+              love.graphics.rectangle("line", ox + r.x + 0.5, oy + r.y + 0.5,
+                                      math.max(1, r.w - 1), math.max(1, r.h - 1))
+            end
+            love.graphics.setColor(1, 1, 1, 1)
           end
           diag.rects, diag.species, diag.stage = #mask, species, "OK"
         end)
