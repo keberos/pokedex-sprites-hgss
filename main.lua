@@ -85,6 +85,9 @@ return function(mod)
     if not rel then return nil end
     if cache[species] ~= nil then return cache[species] or nil end
     local ok, img = pcall(love.graphics.newImage, mod.assets:path(rel))
+    -- LOVE's default filter is linear, which softens pixel art the moment the
+    -- 160x144 canvas is scaled to the real screen. Nearest keeps the edges hard.
+    if ok and img then pcall(img.setFilter, img, "nearest", "nearest") end
     cache[species] = (ok and img) or false
     return cache[species] or nil
   end
